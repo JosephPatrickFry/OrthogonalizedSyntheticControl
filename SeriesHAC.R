@@ -20,11 +20,16 @@ pvaluetTest = function(beta0 = 0, betahat, V, h,n) {
   return(pvalue)
 }
 
+CI_tTest <- function(betahat, V, h, alpha) {
+  cv = abs(qt(alpha, df = h))
+  CI = c(betahat - sqrt(V)*cv, betahat + sqrt(V)*cv)
+  return(CI)
+}
+
+#Orthonormal Series Variance Estimator
 SeriesHACFast = function(Preg, Postg, eta, h) {
   library(comprehenr)
   library(stats)
-  
-  
   
   K = nrow(Preg) + 1
   T0 = ncol(Preg)
@@ -38,21 +43,28 @@ SeriesHACFast = function(Preg, Postg, eta, h) {
 
   freq = matrix(0, nrow = K, ncol = h)
   
-  for (j in 0:(h-1)) {
+  for (j in 1:(h)) {
     if (j%%2 == 0) {
       for (t in 1:T0) {
         freq[1:(K-1),j] = freq[1:(K-1),j] + sqrt(2)*sinpi(2*j*(t/T0))*Preg[,t]
       }
+      
       freq[1:(K-1),j] = freq[1:(K-1),j]/T0
+      
       for (t in 1:T1) {
         freq[K,j] = freq[K,j] + sqrt(2)*sinpi(2*j*(t/T1))*Postg[,t]
       }
+      
       freq[K,j] = freq[K,j]/T1
+      
     } else {
+      
       for (t in 1:T0) {
         freq[1:(K-1),j] = freq[1:(K-1),j] + sqrt(2)*cospi(2*j*(t/T0))*Preg[,t]
       }
+      
       freq[1:(K-1),j] = freq[1:(K-1),j]/T0
+      
       for (t in 1:T1) {
         freq[K,j] = freq[K,j] + sqrt(2)*cospi(2*j*(t/T1))*Postg[,t]
       }
@@ -62,86 +74,90 @@ SeriesHACFast = function(Preg, Postg, eta, h) {
   Vg =  freq %*% t(freq)/h
 
   V = min(c(T0,T1))*t(eta) %*% Vg %*% eta/eta[K]^2
+
   return(V)
 }
 
-SeriesHAC = function(Preg, Postg, eta, h, alpha) {
-  library(comprehenr)
-  
-  K = nrow(Preg) + 1
-  T0 = ncol(Preg)
-  T1 = ncol(Postg)
-  BarPreg = rowMeans(Preg)
-  BarPostg = mean(Postg)
-  #Tmax = max(c(T0,T1))
-  #g = matrix(0, nrow = K, ncol = Tmax)
-  #for (k in 1:(K-1)) {
-  #  g[k,1:T0] = Preg[k,] - BarPreg[k]
-  #}
-  #g[K+1,1:T1] = Postg - BarPostg 
-  
-  #Vg = sum(to_vec(for (s in 1:Tmax) (sum(to_vec(for (i in 1:Tmax) Q(i/Tmax,s/Tmax,h) as.matrix(g[,s]) %*% t(as.matrix(g[,i])) )))))
-  
-  Vg = matrix(NA, nrow = K, ncol = K)
-  for (g in 1:K) {
-    for (l in 1:K) {
-      if (g < K & l < K) {
-        Vg[g,l] = sum(to_vec(for (s in 1:T0) (sum(to_vec(for (i in 1:T0) Q(i/T0,s/T0,h)*(Preg[g,i] - BarPreg[g])*(Preg[l,s] - BarPreg[l]))))))/T0^2
-      }
-      if (g == K & l < K) {
-        Vg[g,l] = sum(to_vec(for (s in 1:T0) (sum(to_vec(for (i in 1:T1) Q(i/T1,s/T0,h)*(Postg[1,i] - BarPostg)*(Preg[l,s] - BarPreg[l]))))))/(T0*T1)
-      }
-      if (g < K & l == K) {
-        Vg[g,l] = sum(to_vec(for (s in 1:T1) (sum(to_vec(for (i in 1:T0) Q(i/T0,s/T1,h)*(Preg[g,i] - BarPreg[g])*(Postg[1,s] - BarPostg))))))/(T0*T1)
-      }
-      if (g == K & l == K) {
-        Vg[g,l] = sum(to_vec(for (s in 1:T1) (sum(to_vec(for (i in 1:T1) Q(i/T1,s/T1,h)*(Postg[1,i] - BarPostg)*(Postg[1,s] - BarPostg))))))/T1^2
-      }
-    }
-  }
-  V = min(c(T0,T1))*t(eta) %*% Vg %*% eta/eta[K]^2
-  return(V)
-}
 
-Optimalh = function(Preg, Postg, p, alpha) {
-  library(vars)
-  
-  #initialVg = SeriesHAC(Preg, Postg, initialh)
-  K = nrow(Preg) + 1
-  T0 = ncol(Preg)
-  T1 = ncol(Postg)
-  n = min(c(T0,T1)) 
-  
-  #Get initial Var(1) estimate
-  var1 = VAR(t(Preg), p = 1)
-  B = BQ(var1)$B
-  Omega0 = cov(t(Preg))
-  
-  MB=-(pi^2)/6*B
-  MBbar=sum(diag((MB %*% inv(Omega0))))/p
-  
+#Find CPE-optimal smoothing parameter using method of Sun (2013)
+CPEOptimalh = function(Preg, Postg, p = 1, sig=.05) {
+  library(pracma)
+  #p: number of parameters of interest
+  #sig: significance level
   
   delta2 = qchisq(.75, df = p)
-  d = qchisq(1-alpha, df = p)
-  a1 = dchisq(d, df = p+2, ncp = delta2)
-  a2 = dchisq(d, df = p, ncp = delta2)
-  a3 = dchisq(d, df = p)
-  tau = 2
+  cv <- qchisq(1 - sig, df = 1)
+  cva <- cv       
+  tao <- 1.15     
+  v <- Preg
+  T_val <- ncol(v)
+  d <- nrow(v)
+  
+  # VAR(1) plug in
+  dep <- v[, 2:T_val]               
+  dep <- t(dep)                     
+  indep <- v[, 1:(T_val - 1)]       
+  indep <- t(indep)                
+    Iindep <- corpcor::pseudoinverse(t(indep) %*% indep) %*% t(indep)
+  A <- (t(dep) %*% indep) %*% corpcor::pseudoinverse(t(indep) %*% indep) 
+  res <- t(dep) - A %*% t(indep)
+  nr <- 1 #number of regressors
+  VA <- (res %*% t(res)) / (T_val - nr)
+  IA <- corpcor::pseudoinverse(diag(d) - A)
+  
+  # plug-in estimate of the LRV
+  omega0 <- IA %*% VA %*% t(IA)
+  
+  
+  #omegaq1 calculation
+  temp <- corpcor::pseudoinverse(diag(nrow(A)) - A)
+  part1 <- A %*% VA
+  part2 <- A %*% A %*% VA %*% t(A)
+  part3 <- A %*% A %*% VA
+  part4 <- -6 * A %*% VA %*% t(A)
+  part5 <- VA %*% t(A) %*% A
+  part6 <- A %*% VA %*% t(A) %*% t(A)
+  part7 <- VA %*% t(A)
+  
+  omegaq1 <- temp %*% temp %*% temp %*% 
+    (part1 + part2 + part3 + part4 + part5 + part6 + part7) %*%
+    t(temp) %*% t(temp) %*% t(temp)
+  
+  #plug-in estimate of B
+  MB <- - (pi^2) / 6 * omegaq1
+  MBbar <- sum(diag(MB %*% corpcor::pseudoinverse(omega0))) / d
+  
+  # Define density functions
+  nchi2den <- function(df, nonc, x) {
+    dchisq(x, df = df, ncp = nonc)
+  }
+  chi2den <- function(df, x) {
+    dchisq(x, df = df)
+  }
+  
   if (MBbar > 0) {
-    Kwtemp = ((delta2*a1)/(4*a2*abs(MBbar)))^(1/3)*n^(2/3)
-  } else {
-    Kwtemp = (((tau-1)*alpha)/(a3*d*abs(MBbar)))^(1/2)*n
+    a1 <- 4 * nchi2den(d, delta2, cva) * abs(MBbar)
+    a2 <- delta2 * nchi2den(d + 2, delta2, cva) * 1
+    a <- a2 / a1
+    Ktemp <- (a^(1/3)) * (T_val^(2/3))
+    
+  } else if (MBbar <= 0) {
+    a1 <- chi2den(d, cva) * cva * abs(MBbar)
+    a2 <- (tao - 1) * (1 - sig)
+    a <- a2 / a1
+    Ktemp <- (a^(1/2)) * T_val
   }
   
-  if (Kwtemp < (p+4)) {
-    Kwtemp= p+4
-  }
-  if(Kwtemp > n) {
-    Kwtemp = n
+  if (Ktemp <= nr + 4) {
+    Kwtemp <- nr + 4
+  } else if (Ktemp > nr + 4 & Ktemp <= T_val) {
+    Kwtemp <- Ktemp
+  } else if (Ktemp > T_val) {
+    Kwtemp <- T_val
   }
   
-  Kwtemp = floor(Kwtemp/2)
-  h = 2*Kwtemp
-  
-  return(h)
-}
+  maxkstar <- max(floor(Kwtemp / 2), 1)
+  kstar <- max(maxkstar)
+  k <- 2 * kstar
+  return(k)
+}  
